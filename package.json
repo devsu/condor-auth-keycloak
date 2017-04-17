@@ -1,0 +1,36 @@
+{
+  "name": "condor-keycloak",
+  "version": "0.0.1",
+  "description": "Condor Authorization Middleware with Keycloak",
+  "main": "index.js",
+  "scripts": {
+    "test": "istanbul cover jasmine",
+    "lint": "eslint .",
+    "coveralls": "cat ./coverage/lcov.info | ./node_modules/.bin/coveralls"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devsu/condor-keycloak.git"
+  },
+  "keywords": [
+    "condor",
+    "middleware",
+    "authentication",
+    "authorization",
+    "keycloak",
+    "grpc"
+  ],
+  "author": "Cesar Salazar @ Devsu",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/devsu/condor-keycloak/issues"
+  },
+  "homepage": "https://github.com/devsu/condor-keycloak#readme",
+  "devDependencies": {
+    "eslint": "^3.19.0",
+    "eslint-config-devsu-node": "0.0.3",
+    "istanbul": "^0.4.5",
+    "jasmine": "^2.5.3",
+    "nsp": "^2.6.3"
+  }
+}
