@@ -27,6 +27,7 @@
   },
   "homepage": "https://github.com/devsu/condor-keycloak#readme",
   "devDependencies": {
+    "bluebird": "^3.5.0",
     "eslint": "^3.19.0",
     "eslint-config-devsu-node": "0.0.3",
     "istanbul": "^0.4.5",

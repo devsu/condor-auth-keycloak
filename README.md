@@ -19,16 +19,16 @@ Then you just need to add keycloak as a middleware in your condor server.
 const Condor = require('condor-framework');
 const Keycloak = require('condor-keycloak');
 const Greeter = require('./greeter');
-const config = require('./keycloak.json');
-const rules = require('./keycloak-rules');
 
-const keycloak = new Keycloak(config, rules);
+const keycloak = new Keycloak();
 
 const app = new Condor()
   .addService('./protos/greeter.proto', 'myapp.Greeter', new Greeter())
-  .use(keycloak)
+  .use(keycloak.middleware())
   .start();
 ```
+
+By default, when no options are passed, it will try to read the configuration from `keycloak.json` and rules from `keycloak-rules.json` files.
 
 ### Configuration File
 
@@ -46,7 +46,7 @@ The `keycloak.json` can be obtained from keycloack, and should look like this:
 
 ### Rules file
 
-The `keycloak-rules.js` is where you configure all the access rules for your application.)
+The `keycloak-rules.js` is where you configure all the access rules for your application.
 
 The rules file should export an object, with the full names of the services as keys, and an optional `default` key which will be used for every method that is not defined in the file.
 
@@ -67,7 +67,7 @@ module.exports = {
   },
 };
 
-function customValidation = (token, context) => {
+function customValidation (token, context) => {
 	if (token.hasRole('myRole') && context.metadata['someKey'] === 'someValue') {
 		return true; // allow to continue
 	}
