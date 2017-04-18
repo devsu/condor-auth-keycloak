@@ -1,20 +1,29 @@
-const Keycloak = require('./index');
 const Promise = require('bluebird');
 const path = require('path');
-const fs = Promise.promisifyAll(require('fs'));
+const grpc = require('grpc');
+const keycloakUtils = require('keycloak-auth-utils');
+const nock = require('nock');
+const jwt = require('jsonwebtoken');
+const ursa = require('ursa');
+const pem2jwk = require('pem-jwk').pem2jwk;
+const fse = Promise.promisifyAll(require('fs-extra'));
+const Spy = require('jasmine-spy');
+const Keycloak = require('./index');
 
 const KEYCLOAK_CONFIG_FILE_PATH = path.join(process.cwd(), 'keycloak.json');
 const KEYCLOAK_RULES_FILE_PATH = path.join(process.cwd(), 'keycloak-rules.js');
 
-describe ('condor-keycloak', () => {
-  let keycloak, keycloakConfig, rules, customValidation, options;
+describe('condor-keycloak', () => {
+  let keycloak, config, rules, customValidation, options, context, call, metadata,
+    next, payload, bearerToken, nockScope, kid;
 
   beforeEach((done) => {
-    keycloakConfig = getSampleConfig();
+    config = getSampleConfig();
     rules = getSampleRules();
+    next = Spy.resolve();
     Promise.all([
-      createConfigFile(keycloakConfig),
-      createRulesFile(rules)
+      createConfigFile(config),
+      createRulesFile(rules),
     ]).then(done).catch(done.fail);
   });
 
@@ -26,86 +35,159 @@ describe ('condor-keycloak', () => {
   });
 
   describe('constructor()', () => {
+    let alternativeConfigFile, alternativeRulesFile;
+
+    beforeEach(() => {
+      alternativeConfigFile = path.join(process.cwd(), 'whatever.json');
+      alternativeRulesFile = path.join(process.cwd(), 'whatever.js');
+      delete require.cache[KEYCLOAK_CONFIG_FILE_PATH];
+      delete require.cache[KEYCLOAK_RULES_FILE_PATH];
+      delete require.cache[alternativeConfigFile];
+      delete require.cache[alternativeRulesFile];
+    });
+
     describe('no options', () => {
-      describe('keycloak.json is not present', () => {
-        beforeEach((done) => {
-          removeConfigFile().then(done).catch(done.fail);
-        });
-
-        it('should throw an error', () => {
-          const filePath = path.join(process.cwd(), 'keycloak.json');
-          expect(() => {
-            keycloak = new Keycloak();
-          }).toThrowError(`Cannot find module '${filePath}'`);
-        });
-      });
-
-      describe('keycloak-rules.js is not present', () => {
-        beforeEach((done) => {
-          removeRulesFile().then(done).catch(done.fail);
-        });
-
-        it('should throw an error', () => {
-          const filePath = path.join(process.cwd(), 'keycloak-rules.js');
-          expect(() => {
-            keycloak = new Keycloak();
-          }).toThrowError(`Cannot find module '${filePath}'`);
-        });
-      });
-
       it('should read config from keycloak.json', () => {
         keycloak = new Keycloak();
-        expect(keycloak.config).toEqual(getSampleConfig());
+        const expectedConfig = new keycloakUtils.Config(KEYCLOAK_CONFIG_FILE_PATH);
+        const expectedGrantManager = new keycloakUtils.GrantManager(expectedConfig);
+        expect(keycloak.config).toEqual(expectedConfig);
+        expect(keycloak.grantManager).toEqual(expectedGrantManager);
       });
 
       it('should read rules from keycloak-rules.js', () => {
         keycloak = new Keycloak();
         expect(JSON.stringify(keycloak.rules)).toEqual(JSON.stringify(getSampleRules()));
       });
+
+      describe('when keycloak.json is not present', () => {
+        beforeEach((done) => {
+          removeConfigFile().then(done).catch(done.fail);
+        });
+
+        it('should throw an error', () => {
+          expect(() => {
+            keycloak = new Keycloak();
+          }).toThrowError(/keycloak\.json/g);
+        });
+      });
+
+      describe('when keycloak-rules.js is not present', () => {
+        beforeEach((done) => {
+          removeRulesFile().then(done).catch(done.fail);
+        });
+
+        it('should throw an error', () => {
+          expect(() => {
+            keycloak = new Keycloak();
+          }).toThrowError(/keycloak-rules\.js/g);
+        });
+      });
     });
 
     describe('options: "configFile"', () => {
       beforeEach(() => {
-        options = { 'configFile': 'whatever.json' };
+        options = {'configFile': 'whatever.json'};
       });
 
-      it('should try to read the configuration from such file', () => {
-        const filePath = path.join(process.cwd(), 'whatever.json');
-        expect(() => {
+      it('should read the configuration from such file', (done) => {
+        fse.moveAsync(KEYCLOAK_CONFIG_FILE_PATH, alternativeConfigFile).then(() => {
           keycloak = new Keycloak(options);
-        }).toThrowError(`Cannot find module '${filePath}'`);
+          const expectedConfig = new keycloakUtils.Config(alternativeConfigFile);
+          const expectedGrantManager = new keycloakUtils.GrantManager(expectedConfig);
+          expect(keycloak.config).toEqual(expectedConfig);
+          expect(keycloak.grantManager).toEqual(expectedGrantManager);
+          return fse.unlinkAsync(alternativeConfigFile);
+        }).then(done);
       });
     });
 
     describe('options: "rulesFile"', () => {
       beforeEach(() => {
-        options = { 'rulesFile': 'whatever.js' };
+        options = {'rulesFile': 'whatever.js'};
       });
 
-      it('should try to read the configuration from such file', () => {
-        const filePath = path.join(process.cwd(), 'whatever.js');
-        expect(() => {
+      it('should try to read the configuration from such file', (done) => {
+        fse.moveAsync(KEYCLOAK_RULES_FILE_PATH, alternativeRulesFile).then(() => {
           keycloak = new Keycloak(options);
-        }).toThrowError(`Cannot find module '${filePath}'`);
+          const expectedRules = require(alternativeRulesFile);
+          expect(keycloak.rules).toEqual(expectedRules);
+          return fse.unlinkAsync(alternativeRulesFile);
+        }).then(done);
+      });
+    });
+  });
+
+  describe('middleware()', () => {
+    beforeEach(() => {
+      keycloak = new Keycloak();
+    });
+
+    it('should return a function', () => {
+      expect(keycloak.middleware).toEqual(jasmine.any(Function));
+    });
+
+    it('should call next', (done) => {
+      setupEmptyContext();
+      keycloak.middleware(context, next).then(() => {
+        expect(next).toHaveBeenCalledTimes(1);
+        done();
+      });
+    });
+
+    describe('when a valid authorization metadata is received', () => {
+      beforeEach(() => {
+        setupValidContext();
+      });
+
+      afterEach(() => {
+        // verify that calls were done
+        nockScope.done();
+      });
+
+      it('should attach the grant to the context', (done) => {
+        keycloak.middleware(context, next).then(() => {
+          expect(context.grant).toEqual(jasmine.objectContaining({
+            'access_token': jasmine.objectContaining({
+              'token': bearerToken.substring(7),
+              'clientId': config.resource,
+              'header': {
+                'alg': 'RS256',
+                'typ': 'JWT',
+                'kid': kid,
+              },
+              'content': jasmine.objectContaining(payload),
+              'signature': jasmine.any(Object),
+            }),
+          }));
+          done();
+        });
+      });
+
+      it('should call next', (done) => {
+        keycloak.middleware(context, next).then(() => {
+          expect(next).toHaveBeenCalledTimes(1);
+          done();
+        });
       });
     });
   });
 
   function createConfigFile(config) {
-    return fs.writeFileAsync(KEYCLOAK_CONFIG_FILE_PATH, JSON.stringify(config));
+    return fse.writeFileAsync(KEYCLOAK_CONFIG_FILE_PATH, JSON.stringify(config));
   }
 
   function removeConfigFile() {
-    return fs.unlinkAsync(KEYCLOAK_CONFIG_FILE_PATH);
+    return fse.unlinkAsync(KEYCLOAK_CONFIG_FILE_PATH);
   }
 
   function createRulesFile(rules) {
-    rules = 'module.exports = ' + JSON.stringify(rules) + ';';
-    return fs.writeFileAsync(KEYCLOAK_RULES_FILE_PATH, rules);
+    const content = `module.exports = ${JSON.stringify(rules)};`;
+    return fse.writeFileAsync(KEYCLOAK_RULES_FILE_PATH, content);
   }
 
   function removeRulesFile() {
-    return fs.unlinkAsync(KEYCLOAK_RULES_FILE_PATH);
+    return fse.unlinkAsync(KEYCLOAK_RULES_FILE_PATH);
   }
 
   function getSampleRules() {
@@ -129,7 +211,79 @@ describe ('condor-keycloak', () => {
       'bearer-only': true,
       'auth-server-url': 'http://localhost:8180/auth',
       'ssl-required': 'none',
-      'resource': 'node-service'
+      'resource': 'node-service',
+    };
+  }
+
+  function setupEmptyContext() {
+    metadata = new grpc.Metadata();
+    call = {metadata};
+    context = {call};
+  }
+
+  function setupValidContext() {
+    setupEmptyContext();
+    const keys = getSampleKeys();
+    kid = '1234567';
+    payload = getSamplePayload();
+    bearerToken = getSampleBearerToken(payload, kid, keys.toPrivatePem('utf8'));
+    const jwk = getSampleJWK(keys.toPublicPem('utf8'), kid);
+    nockScope = nockPublicKey(jwk);
+    metadata.add('authorization', bearerToken);
+  }
+
+  function getSampleKeys() {
+    return ursa.generatePrivateKey();
+  }
+
+  function getSampleBearerToken(payload, kid, privatePem) {
+    return `Bearer ${getSampleToken(payload, kid, privatePem)}`;
+  }
+
+  function getSampleJWK(publicPem, kid) {
+    const jwk = pem2jwk(publicPem);
+    jwk.kid = kid;
+    jwk.alg = 'RS256';
+    jwk.use = 'sig';
+    return jwk;
+  }
+
+  function nockPublicKey(jwk) {
+    return nock('http://localhost:8180')
+      .get('/auth/realms/demo/protocol/openid-connect/certs')
+      .reply(200, {'keys': [jwk]});
+  }
+
+  function getSampleToken(payload, kid, privatePem) {
+    const options = {
+      'header': {
+        'kid': kid,
+      },
+      'algorithm': 'RS256',
+    };
+    return jwt.sign(payload, privatePem, options);
+  }
+
+  function getSamplePayload() {
+    return {
+      'realm_access': {
+        'roles': ['admin', 'uma_authorization', 'user'],
+      },
+      'resource_access': {
+        'node-service': {
+          'roles': ['view-everything'],
+        },
+        'account': {
+          'roles': ['manage-account', 'manage-account-links', 'view-profile'],
+        },
+      },
+      'name': 'Juan Perez',
+      'preferred_username': 'juanperez@example.com',
+      'given_name': 'Juan',
+      'family_name': 'Perez',
+      'email': 'juanperez@example.com',
+      'exp': Math.floor(Date.now() / 1000) + (60 * 60),
+      'typ': 'Bearer',
     };
   }
 });

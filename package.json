@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "istanbul cover jasmine",
+    "posttest": "npm run lint && nsp check && istanbul check-coverage",
     "lint": "eslint .",
     "coveralls": "cat ./coverage/lcov.info | ./node_modules/.bin/coveralls"
   },
@@ -30,8 +31,19 @@
     "bluebird": "^3.5.0",
     "eslint": "^3.19.0",
     "eslint-config-devsu-node": "0.0.3",
+    "fs-extra": "^2.1.2",
+    "grpc": "^1.2.4",
     "istanbul": "^0.4.5",
     "jasmine": "^2.5.3",
-    "nsp": "^2.6.3"
+    "jasmine-spy": "0.0.2",
+    "jsonwebtoken": "^7.3.0",
+    "nock": "^9.0.13",
+    "nsp": "^2.6.3",
+    "pem-jwk": "^1.5.1",
+    "ursa": "^0.9.4"
+  },
+  "dependencies": {
+    "fs": "0.0.1-security",
+    "keycloak-auth-utils": "^3.0.0"
   }
 }

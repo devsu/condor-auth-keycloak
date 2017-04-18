@@ -24,7 +24,7 @@ const keycloak = new Keycloak();
 
 const app = new Condor()
   .addService('./protos/greeter.proto', 'myapp.Greeter', new Greeter())
-  .use(keycloak.middleware())
+  .use(keycloak.middleware)
   .start();
 ```
 
