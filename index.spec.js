@@ -15,7 +15,7 @@ const KEYCLOAK_RULES_FILE_PATH = path.join(process.cwd(), 'keycloak-rules.js');
 
 describe('condor-keycloak', () => {
   let keycloak, config, rules, customValidation, options, context, call, metadata,
-    next, payload, bearerToken, nockScope, kid;
+    next, payload, token, bearerToken, jwk, nockScope, kid;
 
   beforeEach((done) => {
     config = getSampleConfig();
@@ -123,50 +123,93 @@ describe('condor-keycloak', () => {
       keycloak = new Keycloak();
     });
 
-    it('should return a function', () => {
-      expect(keycloak.middleware).toEqual(jasmine.any(Function));
+    afterEach(() => {
+      // should always call next
+      expect(next).toHaveBeenCalledTimes(1);
     });
 
-    it('should call next', (done) => {
-      setupEmptyContext();
-      keycloak.middleware(context, next).then(() => {
-        expect(next).toHaveBeenCalledTimes(1);
-        done();
-      });
-    });
-
-    describe('when a valid authorization metadata is received', () => {
+    describe('without authorization metadata', () => {
       beforeEach(() => {
-        setupValidContext();
+        setupEmptyContext();
       });
 
-      afterEach(() => {
-        // verify that calls were done
-        nockScope.done();
-      });
-
-      it('should attach the grant to the context', (done) => {
+      it('should NOT attach any grant to the context', (done) => {
         keycloak.middleware(context, next).then(() => {
-          expect(context.grant).toEqual(jasmine.objectContaining({
-            'access_token': jasmine.objectContaining({
-              'token': bearerToken.substring(7),
-              'clientId': config.resource,
-              'header': {
-                'alg': 'RS256',
-                'typ': 'JWT',
-                'kid': kid,
-              },
-              'content': jasmine.objectContaining(payload),
-              'signature': jasmine.any(Object),
-            }),
-          }));
+          expect(context.grant).toBeUndefined();
           done();
         });
       });
+    });
 
-      it('should call next', (done) => {
+    describe('with valid authorization metadata', () => {
+      describe('with Bearer prefix', () => {
+        beforeEach(() => {
+          setupValidToken();
+          setupValidContext(bearerToken);
+          nockPublicKey(jwk);
+        });
+
+        afterEach(() => {
+          nockScope.done(); // verify that calls were done
+        });
+
+        it('should attach the grant to the context', (done) => {
+          keycloak.middleware(context, next).then(() => {
+            verifyGrant();
+            done();
+          });
+        });
+      });
+
+      describe('without Bearer prefix', () => {
+        beforeEach(() => {
+          setupValidToken();
+          setupValidContext(token);
+          nockPublicKey(jwk);
+        });
+
+        afterEach(() => {
+          nockScope.done(); // verify that calls were done
+        });
+
+        it('should attach the grant to the context', (done) => {
+          keycloak.middleware(context, next).then(() => {
+            verifyGrant();
+            done();
+          });
+        });
+
+        it('should call next', (done) => {
+          keycloak.middleware(context, next).then(() => {
+            expect(next).toHaveBeenCalledTimes(1);
+            done();
+          });
+        });
+      });
+    });
+
+    describe('with invalid authorization metadata', () => {
+      beforeEach(() => {
+        setupValidContext('invalid token');
+      });
+
+      it('should NOT attach any grant to the context', (done) => {
         keycloak.middleware(context, next).then(() => {
-          expect(next).toHaveBeenCalledTimes(1);
+          expect(context.grant).toBeUndefined();
+          done();
+        });
+      });
+    });
+
+    describe('with expired token', () => {
+      beforeEach(() => {
+        setupExpiredToken();
+        setupValidContext(bearerToken);
+      });
+
+      it('should NOT attach any grant to the context', (done) => {
+        keycloak.middleware(context, next).then(() => {
+          expect(context.grant).toBeUndefined();
           done();
         });
       });
@@ -215,29 +258,39 @@ describe('condor-keycloak', () => {
     };
   }
 
+  function setupToken(expiration) {
+    const keys = getSampleKeys();
+    kid = '1234567';
+    payload = getSamplePayload();
+    payload.exp = expiration;
+    token = getSampleToken(payload, kid, keys.toPrivatePem('utf8'));
+    bearerToken = `Bearer ${token}`;
+    jwk = getSampleJWK(keys.toPublicPem('utf8'), kid);
+  }
+
+  function setupExpiredToken() {
+    const expiration = Math.floor(Date.now() / 1000) - (60 * 60);
+    return setupToken(expiration);
+  }
+
+  function setupValidToken() {
+    const expiration = Math.floor(Date.now() / 1000) + (60 * 60);
+    return setupToken(expiration);
+  }
+
   function setupEmptyContext() {
     metadata = new grpc.Metadata();
     call = {metadata};
     context = {call};
   }
 
-  function setupValidContext() {
+  function setupValidContext(token) {
     setupEmptyContext();
-    const keys = getSampleKeys();
-    kid = '1234567';
-    payload = getSamplePayload();
-    bearerToken = getSampleBearerToken(payload, kid, keys.toPrivatePem('utf8'));
-    const jwk = getSampleJWK(keys.toPublicPem('utf8'), kid);
-    nockScope = nockPublicKey(jwk);
-    metadata.add('authorization', bearerToken);
+    metadata.add('authorization', token);
   }
 
   function getSampleKeys() {
     return ursa.generatePrivateKey();
-  }
-
-  function getSampleBearerToken(payload, kid, privatePem) {
-    return `Bearer ${getSampleToken(payload, kid, privatePem)}`;
   }
 
   function getSampleJWK(publicPem, kid) {
@@ -249,7 +302,7 @@ describe('condor-keycloak', () => {
   }
 
   function nockPublicKey(jwk) {
-    return nock('http://localhost:8180')
+    nockScope = nock('http://localhost:8180')
       .get('/auth/realms/demo/protocol/openid-connect/certs')
       .reply(200, {'keys': [jwk]});
   }
@@ -282,8 +335,23 @@ describe('condor-keycloak', () => {
       'given_name': 'Juan',
       'family_name': 'Perez',
       'email': 'juanperez@example.com',
-      'exp': Math.floor(Date.now() / 1000) + (60 * 60),
       'typ': 'Bearer',
     };
+  }
+
+  function verifyGrant() {
+    expect(context.grant).toEqual(jasmine.objectContaining({
+      'access_token': jasmine.objectContaining({
+        'token': bearerToken.substring(7),
+        'clientId': config.resource,
+        'header': {
+          'alg': 'RS256',
+          'typ': 'JWT',
+          'kid': kid,
+        },
+        'content': jasmine.objectContaining(payload),
+        'signature': jasmine.any(Object),
+      }),
+    }));
   }
 });

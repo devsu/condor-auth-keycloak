@@ -16,13 +16,17 @@ module.exports = class {
   }
 
   middleware(context, next) {
-    const authorizationMetadata = context.call.metadata.get('authorization')[0];
-    if (!authorizationMetadata) {
+    let token = context.call.metadata.get('authorization')[0];
+    if (!token) {
       return next();
     }
-    const accessToken = context.call.metadata.get('authorization')[0].substring(7);
-    return this.grantManager.createGrant({'access_token': accessToken}).then((grant) => {
-      context.grant = grant;
+    if (token.indexOf('Bearer ') === 0) {
+      token = token.substring(7);
+    }
+    return this.grantManager.createGrant({'access_token': token}).then((grant) => {
+      if (!grant.access_token.isExpired()) {
+        context.grant = grant;
+      }
       next();
     });
   }
