@@ -1,6 +1,6 @@
 {
   "name": "condor-auth-keycloak",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Condor Authorization Middleware with Keycloak",
   "main": "index.js",
   "scripts": {
@@ -29,6 +29,8 @@
   "homepage": "https://github.com/devsu/condor-auth-keycloak#readme",
   "devDependencies": {
     "bluebird": "^3.5.0",
+    "condor-auth": "^0.1.0",
+    "condor-framework": "^1.2.1",
     "eslint": "^3.19.0",
     "eslint-config-devsu-node": "0.0.3",
     "fs-extra": "^2.1.2",

@@ -7,12 +7,13 @@ An authorization strategy for [Condor Auth Middleware](https://github.com/devsu/
 
 This module validates and decodes bearer tokens provided by [Keycloak](http://www.keycloak.org/) (Keycloak uses OpenID Connect), and maps **realm** and **resource** **roles** that come in the JWT created by keycloak.
 
+[![Build Status](https://travis-ci.org/devsu/condor-auth-keycloak.svg?branch=master)](https://travis-ci.org/devsu/condor-auth-keycloak)
+[![Coverage Status](https://coveralls.io/repos/github/devsu/condor-auth-keycloak/badge.svg?branch=master)](https://coveralls.io/github/devsu/condor-auth-keycloak?branch=master)
+
 ## Installation
 
 ```bash
-npm install --save condor-framework 
-npm install --save condor-auth
-npm install --save condor-auth-keycloak 
+npm i --save condor-framework condor-auth condor-auth-keycloak 
 ```
 
 ## How to use
@@ -63,3 +64,7 @@ All values are optional. Their default values are:
 | Option       | Description                        | Default         |
 |--------------|------------------------------------|-----------------|
 | configFile   | The path to the configuration file | keycloak.json   |
+
+## License and Credits
+
+MIT License. Copyright 2017 by **Devsu LLC**, a great [microservices development team](https://devsu.com)
